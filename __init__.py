@@ -4,7 +4,9 @@ import os
 from json import load, dump
 import re
 from typing import Dict, List
-from nonebot import get_bot, on_command, on_startup
+from nonebot import get_bot, on_command, on_startup, CommandSession, logger
+from nonebot.command.argfilter.controllers import handle_cancellation
+from nonebot.command.argfilter.validators import not_empty
 from hoshino import priv, Service
 from hoshino.config import SUPERUSERS
 from hoshino.typing import HoshinoBot, CQEvent
@@ -14,7 +16,8 @@ from .query import login_all, query_all
 from .var import BaseSet, LoadBase, platform_dict, query_cache, queue_dict, private_dict, Platform, Priority
 from .tool import refresh_account
 from .img.text2img import image_draw
-from .database.dal import pcr_sqla, PCRBind
+from .database.dal import pcr_sqla, PCRBind, ArenaAccount ,PlayerInfo
+from .client.pcrclient import pcrclient, bsdkclient, ApiException
 
 sv_b = Service('b服竞技场推送', help_="发送【竞技场帮助】", bundle='pcr查询')
 sv_qu = Service('渠服竞技场推送', help_="发送【渠竞技场帮助】", bundle='pcr查询')
@@ -34,7 +37,7 @@ async def send_jjchelp(bot: HoshinoBot, ev: CQEvent):
 # 默认开启jjc、pjjc，关闭排名上升、上线提醒
 # 手动查询时，返回昵称、jjc/pjjc排名、场次、
 jjc/pjjc当天排名上升次数、最后登录时间。
-# 支持群聊使用。只允许群聊使用！！！
+# 发送竞技场雷达帮助获取额外功能的使用
 ------------------------------------------------
 命令格式：
 # 只绑定1个uid时，绑定的序号可以不填。
@@ -476,7 +479,6 @@ async def see_a_see_frame(bot: HoshinoBot, ev: CQEvent):
 
 # ========================================AUTO========================================
 
-
 @on_startup
 async def on_arena_schedule():
     if not BaseSet.mode.value:
@@ -498,3 +500,299 @@ async def leave_notice(session: NoticeSession):
         bot = get_bot()
         await pcr_sqla.delete_bind(uid, group=gid)
         await bot.send_group_msg(group_id=gid, message=f'{uid}退群了，已自动删除其绑定在本群的竞技场订阅推送')
+
+
+# ========================================竞技场雷达账号绑定========================================
+@on_command('bind_arena_account', aliases=('竞技场雷达账号绑定'), only_to_me=True)
+async def bind_arena_account(session:CommandSession):
+
+    arena_account = session.get('arena_account', prompt='请输入竞技场雷达账号：', arg_filters=[
+        handle_cancellation(session),
+        not_empty('账号不能为空，请重新输入')
+    ])
+
+    arena_password = session.get('arena_password', prompt='请输入竞技场雷达账号密码：', arg_filters=[
+        handle_cancellation(session),
+        not_empty('密码不能为空，请重新输入')
+    ])
+    user_id = session.ctx['user_id']#用户QQ账号获取
+
+    if len(arena_password) > 20:
+        await session.send('密码不能超过20个字符，请输入较短的密码~')
+        return
+
+    try:
+        existing_arena_account = await pcr_sqla.select_arena_account(user_id)
+        if existing_arena_account:
+            await session.send('您已经绑定了一个竞技场雷达账号，请勿重复绑定。')
+            return
+
+        await session.send("账号和密码已接受，正在验证...")
+
+        # 使用 bsdkclient 的 b_login 函数进行账号密码验证
+        bs_client = bsdkclient(arena_account, arena_password, 0)  # 假设0是平台ID
+        uid, access_key = await bs_client.b_login()
+
+        if not uid or not access_key:
+            await session.send('用户名或密码错误，请检查后重新输入。')
+            return
+
+        await session.send('验证成功，正在绑定...')
+
+        # 插入新的 arena_account 
+        await pcr_sqla.insert_arena_account({
+            'user_id': user_id,
+            'arena_account': arena_account,
+            'arena_password': arena_password,
+            'uid': uid,
+            'access_key': access_key
+        })
+        await session.send('竞技场雷达账号绑定成功！')
+    except Exception as e:
+        await session.send(f'绑定失败：{str(e)}')
+
+# ========================================删除竞技场雷达账号绑定========================================
+
+@on_command('delete_arena_account', aliases=('删除竞技场雷达绑定'), only_to_me=True)
+async def delete_arena_radar_bind(session: CommandSession):
+    user_id = session.ctx['user_id']
+
+    try:
+        existing_arena_account = await pcr_sqla.select_arena_account(user_id)
+        if not existing_arena_account:
+            await session.send('您没有绑定竞技场雷达账号，无需删除。')
+            return
+
+        # 删除绑定记录
+        await pcr_sqla.delete_arena_account(user_id)
+        await session.send('竞技场雷达账号绑定已删除！')
+    except Exception as e:
+        await session.send(f'删除失败：{str(e)}')
+
+'''
+@on_command('say_hello1', aliases=('小马你在？'), only_to_me=True)
+async def say_hello1(session):
+    await session.send('阿米诺斯！')
+
+# 公主竞技场排名查询测试
+@on_command('query_grand_arena_rank', aliases=('测试'),only_to_me=False)
+async def query_grand_arena_rank(session: CommandSession):
+    user_id = session.ctx['user_id']
+    
+    try:        
+        arena_account = await pcr_sqla.select_arena_account(user_id)
+        account = arena_account.arena_account
+        password = arena_account.arena_password
+
+        client=pcrclient(bsdkclient(account, password, 0))
+
+        await client.login() 
+        logger.info('竞技场查询账号登录完成！')
+        
+        #uid=114514
+        #res = await client.callapi('/profile/get_profile', {'target_viewer_id': uid})
+        #print(res)
+    
+        res =await client.callapi('/grand_arena/ranking', {'limit': 20, 'page': 1})
+        if 'ranking' not in res:
+            res =await client.callapi('/grand_arena/ranking', {'limit': 20, 'page': 1})
+        ranking_info = []
+        if 'ranking' in res:
+            for user in res['ranking']:
+                res_user =await client.callapi('/profile/get_profile', {'target_viewer_id': int(user['viewer_id'])})
+                user_name = res_user['user_info']["user_name"]
+                viewer_id = user['viewer_id']
+                rank = user['rank']
+                ranking_info.append(f"排名: {rank}-----{user_name}\nID: {viewer_id}")
+
+            text = f"公主竞技场雷达信息:\n" + "\n".join(ranking_info)
+        else:
+            text = "查询排名失败，请稍后再试。"
+
+        await session.send(text)
+
+    except ApiException as e:
+        await session.send(f'查询出错: {str(e)}')
+'''
+
+async def get_profile(client: pcrclient, viewer_id: int):
+    player = await pcr_sqla.get_player_info(viewer_id)
+    if player:
+        return player.user_name
+    else:
+        res_user = await client.callapi('/profile/get_profile', {'target_viewer_id': viewer_id})
+        user_name = res_user['user_info']["user_name"]
+        await pcr_sqla.add_player_info(viewer_id, user_name)
+        return user_name
+
+# ========================================竞技场雷达,启动!!!!!========================================
+@sv_b.on_prefix('jjc雷达')
+@sv_b.on_prefix('pjjc雷达')
+async def query_arena_rank(bot: HoshinoBot, ev: CQEvent):
+    user_id = ev.user_id
+
+    # 获取竞技场类型和查询页数参数
+    message_text = ev.message.extract_plain_text().strip()
+    if ev.prefix == 'jjc雷达':
+        arena_type = 'arena'
+    elif ev.prefix == 'pjjc雷达':
+        arena_type = 'grand_arena'
+    else:
+        await bot.send(ev, '竞技场类型无效，请使用【jjc雷达】或【pjjc雷达】。')
+        return
+
+    page = 1
+    if message_text.isdigit():
+        page = int(message_text)
+
+    try:
+        arena_account = await pcr_sqla.select_arena_account(user_id)
+        if not arena_account:
+            await bot.send(ev, '您还没有绑定竞技场雷达账号，请先绑定。')
+            return
+        
+        account = arena_account.arena_account
+        password = arena_account.arena_password
+
+        client=pcrclient(bsdkclient(account, password, 0))
+
+        await client.login()
+        logger.info('竞技场查询账号登录完成！')
+        await bot.send(ev, '账号登录成功,正在进行查询/更新信息操作。')
+        api_endpoint = '/arena/ranking' if arena_type == 'arena' else '/grand_arena/ranking'
+        res = await client.callapi(api_endpoint, {'limit': 20, 'page': page})
+        if 'ranking' not in res:
+            res = await client.callapi(api_endpoint, {'limit': 20, 'page': page})
+
+        ranking_info = []
+        if 'ranking' in res:
+            for user in res['ranking']:
+                viewer_id = user['viewer_id']
+                rank = user['rank']
+                user_name = await get_profile(client, viewer_id)
+                ranking_info.append(f"排名: {rank} - {user_name}\nID: {viewer_id}")
+
+            text = f"{'竞技场' if arena_type == 'arena' else '公主竞技场'}第{page}页玩家信息:\n" + "\n".join(ranking_info)
+        else:
+            text = "查询排名失败，请稍后再试。"
+
+        await bot.send(ev, text)
+
+    except ApiException as e:
+        await bot.send(ev, f'查询出错: {str(e)}')
+
+# ========================================更新竞技场玩家信息缓存========================================
+@sv_b.on_prefix('更新jjc雷达缓存')
+@sv_b.on_prefix('更新pjjc雷达缓存')
+async def update_player_info_command(bot: HoshinoBot, ev: CQEvent):
+    user_id = ev.user_id
+
+    # 获取竞技场类型和查询页数参数
+    message_text = ev.message.extract_plain_text().strip()
+    if ev.prefix == '更新jjc雷达缓存':
+        arena_type = 'arena'
+    elif ev.prefix == '更新pjjc雷达缓存':
+        arena_type = 'grand_arena'
+    else:
+        await bot.send(ev, '竞技场类型无效，请使用【更新jjc雷达】或【更新pjjc雷达】。')
+        return
+
+    page = 1
+    if message_text.isdigit():
+        page = int(message_text)
+
+    try:
+        arena_account = await pcr_sqla.select_arena_account(user_id)
+        if not arena_account:
+            await bot.send(ev, '您还没有绑定竞技场雷达账号，请先绑定。')
+            return
+        
+        account = arena_account.arena_account
+        password = arena_account.arena_password
+
+        client=pcrclient(bsdkclient(account, password, 0))
+
+        await client.login()
+        logger.info('竞技场查询账号登录完成！')
+        await bot.send(ev, '账号登录成功,正在进行查询/更新信息操作。')
+
+        api_endpoint = '/arena/ranking' if arena_type == 'arena' else '/grand_arena/ranking'
+        res = await client.callapi(api_endpoint, {'limit': 20, 'page': page})
+        if 'ranking' not in res:
+            res = await client.callapi(api_endpoint, {'limit': 20, 'page': page})
+
+        update_info = []
+        if 'ranking' in res:
+            for user in res['ranking']:
+                viewer_id = user['viewer_id']
+                rank = user['rank']
+                user_name = await get_profile(client, viewer_id)
+                await pcr_sqla.update_player_info(viewer_id, user_name)
+                update_info.append(f"排名: {rank} - {user_name}\nID: {viewer_id}")
+
+            text = f"{'竞技场' if arena_type == 'arena' else '公主竞技场'}第{page}页玩家信息更新:\n" + "\n".join(update_info)
+        else:
+            text = "更新玩家信息失败，请稍后再试。"
+
+        await bot.send(ev, text)
+
+    except ApiException as e:
+        await bot.send(ev, f'更新出错: {str(e)}')
+
+
+# ========================================竞技场雷达帮助========================================
+@sv_b.on_fullmatch('竞技场雷达帮助')
+async def send_radar_help(bot: HoshinoBot, ev: CQEvent):
+    sv_radar_help = f'''\t\t\t\t\t【竞技场雷达(透视前五十账号ID功能)帮助】
+1)发送竞技场雷达帮助获取帮助
+2)在使用前请先绑定自己的游戏账号,请注意账号是无价的,使用该插
+件意味着!!!!!你已了解使用该插件可能带来的风险!!!!!
+3)绑定竞技场雷达账号需要添加机器人的好友,私聊发送'竞技场雷达账号绑定'根据提示进行账号绑定
+4)可私聊发送'删除竞技场雷达绑定'删除你所绑定的账号密码
+5)绑定完成后即可使用竞技场雷达功能,发送'jjc/pjjc+雷达+数字'开始进行查询
+6)发送查询例子1 'jjc雷达' 雷达后面不接数字,默认情况下不接数字查询的是jjc第一页也就是
+  你的jjc前1-20名用户的名字和id
+7)发送查询例子2 'pjjc雷达2' 就是查询pjjc第二页21-40的用户信息
+8)请注意,该jjc雷达插件使用数据库缓存用户信息,可能出现用户名字与实际不一致的情况,可能是由于该用户进行了名字更改,此时需要进行缓存更新
+  更新例子'更新jjc雷达缓存'即可,即更新+jjc/pjjc缓存+数字(查询页数)
+9)使用雷达功能会顶掉你的账号!
+  使用雷达功能会顶掉你的账号!
+  使用雷达功能会顶掉你的账号!
+  '''
+    if not priv.check_priv(ev, priv.SUPERUSER):
+        pic = image_draw(sv_radar_help)
+    else:
+        sv_radar_help_adm = f'''------------------------------------------------
+开发者调试用帮助：
+1）发送'清空竞技场雷达账号' 清空绑定的竞技场雷达查询用账号
+2）发送'清空用户缓存信息'   清空缓存的游戏内用户名和id'''
+        pic = image_draw(sv_radar_help+sv_radar_help_adm)
+    await bot.send(ev, f'[CQ:image,file={pic}]')
+
+
+# ========================================管理员用删库========================================
+# 清空 playerinfo 数据表命令
+@sv_b.on_command('清空用户缓存信息', permission=priv.SUPERUSER)
+async def clear_playerinfo_command(session: CommandSession):
+    try:
+        ev = session.event
+        if not priv.check_priv(ev, priv.SUPERUSER):
+            await session.send('权限不足，无法执行此操作。')
+            return
+        await pcr_sqla.clear_player_info()
+        await session.send('玩家信息数据表已清空。')
+    except Exception as e:
+        await session.send(f'清空玩家信息数据表失败：{str(e)}')
+
+# 清空 arenaaccount 数据表命令
+@sv_b.on_command('清空竞技场雷达账号', permission=priv.SUPERUSER)
+async def clear_arenaaccount_command(session: CommandSession):
+    try:
+        ev = session.event
+        if not priv.check_priv(ev, priv.SUPERUSER):
+            await session.send('权限不足，无法执行此操作。')
+            return
+        await pcr_sqla.clear_arena_account()
+        await session.send('竞技场账号数据表已清空。')
+    except Exception as e:
+        await session.send(f'清空竞技场账号数据表失败：{str(e)}')

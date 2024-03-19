@@ -14,6 +14,7 @@ class PCRBind(SQLModel, table=True):
     up_notice: Optional[int] = Field(default=False, title='上升提醒')
     online_notice: Optional[int] = Field(default=0, title='上线提醒')
     private: Optional[bool] = Field(default=False, title='私聊')
+
     
 
 class Account(SQLModel, table=True):
@@ -37,3 +38,16 @@ class JJCHistory(SQLModel, table=True):
     after: int = Field(title='之后')
     is_send: bool = Field(title='发送')
 
+class ArenaAccount(SQLModel, table=True):
+    __table_args__ = {'keep_existing': True}
+    id: Optional[int] = Field(default=None, primary_key=True, title='序号')
+    user_id: int = Field(title='用户QQ')
+    arena_account: str = Field(description="竞技场雷达账号")
+    arena_password: str = Field(description="竞技场雷达账号密码")
+    uid: str = Field(description="用户ID")  
+    access_key: str = Field(description="密钥") 
+
+class PlayerInfo(SQLModel, table=True):
+    __table_args__ = {'keep_existing': True}
+    viewer_id: int = Field(primary_key=True, title='Viewer ID')
+    user_name: str = Field(title='玩家名字')

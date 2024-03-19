@@ -7,7 +7,7 @@ from sqlalchemy import case, delete, desc, distinct, insert, update
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql.expression import func
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from .models import Account, PCRBind, JJCHistory
+from .models import Account, PCRBind, JJCHistory,ArenaAccount,PlayerInfo
 from pathlib import Path
 from ..var import LoadBase, Platform
 
@@ -119,7 +119,81 @@ class SQLA:
                 sql = sql.values(**data)
                 await session.execute(sql)
                 return 1
+            
+    #jjc雷达账号相关           
+    async def insert_arena_account(self, arena_account: dict) -> int:
+        async with self.async_session() as session:
+            async with session.begin():
+                await session.execute(
+                    insert(ArenaAccount).values(arena_account)
+                )
+                await session.commit()
+                return 1
 
+    async def select_arena_account(self, user_id: int) -> Optional[ArenaAccount]:
+        async with self.async_session() as session:
+            async with session.begin():
+                result = await session.execute(
+                    select(ArenaAccount).where(ArenaAccount.user_id == user_id)
+                )
+                return result.scalar_one_or_none()
+
+    async def delete_arena_account(self, user_id: int) -> int:
+        async with self.async_session() as session:
+            async with session.begin():
+                result = await session.execute(
+                    delete(ArenaAccount).where(ArenaAccount.user_id == user_id)
+                )
+                await session.commit()
+                return result.rowcount
+            
+# 缓存用户表playerinfo 表相关
+    async def get_player_info(self, viewer_id: int) -> Optional[PlayerInfo]:
+        async with self.async_session() as session:
+            async with session.begin():
+                result = await session.execute(
+                    select(PlayerInfo).where(PlayerInfo.viewer_id == viewer_id)
+                )
+                return result.scalar_one_or_none()
+
+    async def add_player_info(self, viewer_id: int, user_name: str) -> int:
+        async with self.async_session() as session:
+            async with session.begin():
+                player = PlayerInfo(viewer_id=viewer_id, user_name=user_name)
+                session.add(player)
+                await session.commit()
+                return 1
+
+    async def update_player_info(self, viewer_id: int, user_name: str) -> int:
+        async with self.async_session() as session:
+            async with session.begin():
+                result = await session.execute(
+                    select(PlayerInfo).where(PlayerInfo.viewer_id == viewer_id)
+                )
+                player = result.scalar_one_or_none()
+                if player:
+                    player.user_name = user_name
+                    await session.commit()
+                else:
+                    await self.add_player_info(viewer_id, user_name)
+                return 1
+            
+    # 清空 playerinfo 数据表
+    async def clear_player_info(self) -> int:
+        async with self.async_session() as session:
+            async with session.begin():
+                await session.execute(delete(PlayerInfo))
+                await session.commit()
+                return 1
+
+    # 清空 arenaaccount 数据表
+    async def clear_arena_account(self) -> int:
+        async with self.async_session() as session:
+            async with session.begin():
+                await session.execute(delete(ArenaAccount))
+                await session.commit()
+                return 1            
+                
     # 竞技场记录
     async def get_up_num(self, platform: int, pcrid: int, date: int) -> Tuple[int]:
         pcr_time: float = pcr_date(date).timestamp()
