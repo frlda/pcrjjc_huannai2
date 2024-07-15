@@ -1,4 +1,5 @@
-本仓库改自pcrjj_chuannai2,仅新增了竞技场雷达功能
+本仓库改自pcrjj_chuannai2,仅新增了竞技场雷达(透视名字和id)功能，不知道塞哪里，全塞_init_.py里面了（
+主要利用传/arena/ranking传回玩家viewer_id，然后再利用/profile/get_profile获取玩家名字user_name
 
 发送竞技场雷达帮助获取帮助
 ![f863bc35259cf2038cc29851f5e43a6f](https://github.com/frlda/pcrjjc_huannai2/assets/97551927/01838d63-8b6b-416f-97b2-9224e4a4e3ac)
