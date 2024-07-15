@@ -573,46 +573,6 @@ async def delete_arena_radar_bind(session: CommandSession):
 @on_command('say_hello1', aliases=('小马你在？'), only_to_me=True)
 async def say_hello1(session):
     await session.send('阿米诺斯！')
-
-# 公主竞技场排名查询测试
-@on_command('query_grand_arena_rank', aliases=('测试'),only_to_me=False)
-async def query_grand_arena_rank(session: CommandSession):
-    user_id = session.ctx['user_id']
-    
-    try:        
-        arena_account = await pcr_sqla.select_arena_account(user_id)
-        account = arena_account.arena_account
-        password = arena_account.arena_password
-
-        client=pcrclient(bsdkclient(account, password, 0))
-
-        await client.login() 
-        logger.info('竞技场查询账号登录完成！')
-        
-        #uid=114514
-        #res = await client.callapi('/profile/get_profile', {'target_viewer_id': uid})
-        #print(res)
-    
-        res =await client.callapi('/grand_arena/ranking', {'limit': 20, 'page': 1})
-        if 'ranking' not in res:
-            res =await client.callapi('/grand_arena/ranking', {'limit': 20, 'page': 1})
-        ranking_info = []
-        if 'ranking' in res:
-            for user in res['ranking']:
-                res_user =await client.callapi('/profile/get_profile', {'target_viewer_id': int(user['viewer_id'])})
-                user_name = res_user['user_info']["user_name"]
-                viewer_id = user['viewer_id']
-                rank = user['rank']
-                ranking_info.append(f"排名: {rank}-----{user_name}\nID: {viewer_id}")
-
-            text = f"公主竞技场雷达信息:\n" + "\n".join(ranking_info)
-        else:
-            text = "查询排名失败，请稍后再试。"
-
-        await session.send(text)
-
-    except ApiException as e:
-        await session.send(f'查询出错: {str(e)}')
 '''
 
 async def get_profile(client: pcrclient, viewer_id: int):
